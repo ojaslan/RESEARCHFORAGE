@@ -1,453 +1,1260 @@
 import streamlit as st
-import networkx as nx
+import pdfplumber
+from groq import Groq
 import json
-import random
-from pyvis.network import Network
-import tempfile
-import os
-import pandas as pd
+import io
+import time
+from datetime import datetime
 
-# ── Page config ───────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# PAGE CONFIG
+# ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Knowledge Graph Agent",
+    page_title="Research Paper Analyzer",
     page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-# ── Custom CSS ─────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# PREMIUM STYLING
+# ──────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
 
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
 
-    .stApp { background-color: #0d1117; color: #e6edf3; }
+html, body, [class*="css"] {
+    font-family: 'Sora', sans-serif !important;
+}
 
-    .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
+.stApp {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    min-height: 100vh;
+}
 
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        background: #161b22;
-        border-right: 1px solid #30363d;
+.block-container {
+    padding: 2.5rem 3rem !important;
+    max-width: 1400px !important;
+    margin: 0 auto !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* NAVIGATION BAR */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.2rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 3rem;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.logo-icon {
+    font-size: 1.8rem;
+}
+
+.nav-badge {
+    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* HERO SECTION */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.hero-section {
+    text-align: center;
+    margin-bottom: 3.5rem;
+}
+
+.hero-title {
+    font-size: 3.2rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.8rem;
+    letter-spacing: -0.02em;
+}
+
+.hero-subtitle {
+    font-size: 1.1rem;
+    color: #94a3b8;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.hero-description {
+    font-size: 0.95rem;
+    color: #cbd5e1;
+    max-width: 600px;
+    margin: 0 auto;
+    line-height: 1.6;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* INPUT SECTION */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.input-container {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.input-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 16px;
+    padding: 1.8rem;
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+}
+
+.input-card:hover {
+    border-color: rgba(59, 130, 246, 0.4);
+    background: rgba(30, 41, 59, 0.95);
+    box-shadow: 0 0 30px rgba(59, 130, 246, 0.1);
+}
+
+.input-label {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #cbd5e1;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.input-label-icon {
+    font-size: 1.2rem;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* FILE UPLOADER */
+/* ════════════════════════════════════════════════════════════════════════════ */
+[data-testid="stFileUploader"] {
+    background: transparent !important;
+}
+
+[data-testid="stFileUploader"] > div {
+    border: 2px dashed rgba(59, 130, 246, 0.5) !important;
+    border-radius: 12px !important;
+    padding: 2rem !important;
+    background: rgba(59, 130, 246, 0.05) !important;
+    transition: all 0.3s ease !important;
+}
+
+[data-testid="stFileUploader"] > div:hover {
+    border-color: #3b82f6 !important;
+    background: rgba(59, 130, 246, 0.1) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* TEXT INPUT */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.stTextInput > div > div > input {
+    background: rgba(15, 23, 42, 0.5) !important;
+    border: 1px solid rgba(148, 163, 184, 0.2) !important;
+    border-radius: 10px !important;
+    color: #ffffff !important;
+    padding: 0.8rem 1rem !important;
+    font-size: 0.9rem !important;
+    transition: all 0.3s ease !important;
+}
+
+.stTextInput > div > div > input::placeholder {
+    color: #64748b !important;
+}
+
+.stTextInput > div > div > input:focus {
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* BUTTONS */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.stButton > button {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    padding: 0.75rem 1.5rem !important;
+    width: 100% !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3) !important;
+}
+
+.stButton > button:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+    box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4) !important;
+    transform: translateY(-2px);
+}
+
+.stButton > button:active {
+    transform: translateY(0);
+}
+
+.stDownloadButton > button {
+    background: rgba(59, 130, 246, 0.2) !important;
+    color: #3b82f6 !important;
+    border: 1px solid #3b82f6 !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    width: 100% !important;
+    padding: 0.6rem 1.2rem !important;
+    transition: all 0.3s ease !important;
+}
+
+.stDownloadButton > button:hover {
+    background: rgba(59, 130, 246, 0.3) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* PROGRESS BAR */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.stProgress > div > div > div > div {
+    background: linear-gradient(90deg, #3b82f6 0%, #2563eb 100%) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* SECTION TITLES */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.section-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin: 2.5rem 0 1.5rem 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid rgba(59, 130, 246, 0.3);
+}
+
+.section-icon {
+    font-size: 1.8rem;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* PAPER INFO CARD */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.paper-card {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(30, 41, 59, 0.8) 100%);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 16px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    backdrop-filter: blur(10px);
+}
+
+.paper-title {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 1rem;
+    line-height: 1.4;
+}
+
+.paper-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-bottom: 1.2rem;
+    font-size: 0.9rem;
+}
+
+.meta-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #cbd5e1;
+}
+
+.meta-icon {
+    font-size: 1.1rem;
+    color: #3b82f6;
+}
+
+.keywords-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+}
+
+.keyword-tag {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    transition: all 0.3s ease;
+}
+
+.keyword-tag:hover {
+    background: rgba(59, 130, 246, 0.3);
+    border-color: #60a5fa;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* METRICS */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.metric-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 14px;
+    padding: 1.5rem;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.metric-card:hover {
+    border-color: rgba(59, 130, 246, 0.4);
+    background: rgba(30, 41, 59, 0.95);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 30px rgba(59, 130, 246, 0.15);
+}
+
+.metric-value {
+    font-size: 2rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.5rem;
+}
+
+.metric-label {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* INSIGHT CARDS */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.insight-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 14px;
+    padding: 1.8rem;
+    margin-bottom: 1.5rem;
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+}
+
+.insight-card:hover {
+    border-color: rgba(59, 130, 246, 0.3);
+    box-shadow: 0 12px 30px rgba(59, 130, 246, 0.1);
+    transform: translateY(-2px);
+}
+
+.insight-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 1rem;
+}
+
+.insight-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #60a5fa;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.insight-icon {
+    font-size: 1.3rem;
+}
+
+.insight-content {
+    color: #cbd5e1;
+    font-size: 0.95rem;
+    line-height: 1.7;
+}
+
+.insight-content strong {
+    color: #ffffff;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* GRID LAYOUT FOR INSIGHTS */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.insights-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* STEP INDICATOR */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.step-indicator {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 1.2rem;
+    margin-bottom: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    animation: slideIn 0.3s ease;
+}
+
+.step-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: white;
+    font-weight: 700;
+    flex-shrink: 0;
+    font-size: 0.9rem;
+}
+
+.step-text {
+    color: #cbd5e1;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.step-text strong {
+    color: #60a5fa;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
     }
-    section[data-testid="stSidebar"] * { color: #e6edf3 !important; }
-
-    /* Cards */
-    .kg-card {
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 10px;
-        padding: 1rem 1.25rem;
-        margin-bottom: 0.75rem;
+    to {
+        opacity: 1;
+        transform: translateX(0);
     }
-    .kg-card h4 { margin: 0 0 0.25rem; color: #58a6ff; font-size: 0.95rem; }
-    .kg-card p  { margin: 0; font-size: 0.82rem; color: #8b949e; }
+}
 
-    /* Metric tiles */
-    .metric-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 1rem; }
-    .metric-tile {
-        flex: 1; min-width: 110px;
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 10px;
-        padding: 0.8rem 1rem;
-        text-align: center;
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* MESSAGES */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.stWarning {
+    background: rgba(202, 138, 4, 0.1) !important;
+    border: 1px solid rgba(202, 138, 4, 0.3) !important;
+    border-radius: 10px !important;
+    padding: 1rem !important;
+}
+
+.stError {
+    background: rgba(220, 38, 38, 0.1) !important;
+    border: 1px solid rgba(220, 38, 38, 0.3) !important;
+    border-radius: 10px !important;
+    padding: 1rem !important;
+}
+
+.stSuccess {
+    background: rgba(34, 197, 94, 0.1) !important;
+    border: 1px solid rgba(34, 197, 94, 0.3) !important;
+    border-radius: 10px !important;
+    padding: 1rem !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* EXPANDER */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.streamlit-expanderHeader {
+    background: rgba(30, 41, 59, 0.8) !important;
+    border: 1px solid rgba(148, 163, 184, 0.2) !important;
+    border-radius: 10px !important;
+    padding: 1rem !important;
+}
+
+.streamlit-expanderHeader:hover {
+    background: rgba(30, 41, 59, 0.95) !important;
+    border-color: rgba(59, 130, 246, 0.3) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* EMPTY STATE */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    background: rgba(30, 41, 59, 0.5);
+    border-radius: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    margin: 2rem 0;
+}
+
+.empty-icon {
+    font-size: 4rem;
+    margin-bottom: 1.5rem;
+    opacity: 0.7;
+}
+
+.empty-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 0.5rem;
+}
+
+.empty-text {
+    font-size: 0.95rem;
+    color: #94a3b8;
+    margin-bottom: 2rem;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* FEATURE CARDS */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.2rem;
+    margin-top: 2rem;
+}
+
+.feature-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 12px;
+    padding: 1.5rem;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.feature-card:hover {
+    border-color: rgba(59, 130, 246, 0.4);
+    background: rgba(30, 41, 59, 0.95);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 30px rgba(59, 130, 246, 0.1);
+}
+
+.feature-icon {
+    font-size: 2rem;
+    margin-bottom: 0.8rem;
+}
+
+.feature-name {
+    font-weight: 600;
+    color: #cbd5e1;
+    font-size: 0.9rem;
+    margin-bottom: 0.3rem;
+}
+
+.feature-desc {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* FOOTER INFO */
+/* ════════════════════════════════════════════════════════════════════════════ */
+.info-box {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 1rem;
+    color: #cbd5e1;
+    font-size: 0.85rem;
+    margin-top: 1.5rem;
+}
+
+.info-box strong {
+    color: #60a5fa;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/* RESPONSIVE */
+/* ════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+    .input-container {
+        grid-template-columns: 1fr;
     }
-    .metric-tile .val { font-size: 1.7rem; font-weight: 700; color: #58a6ff; }
-    .metric-tile .lbl { font-size: 0.72rem; color: #8b949e; text-transform: uppercase; letter-spacing: .05em; }
-
-    /* Section header */
-    .section-header {
-        font-size: 0.72rem;
-        font-weight: 600;
-        color: #8b949e;
-        text-transform: uppercase;
-        letter-spacing: .08em;
-        margin: 1.2rem 0 0.5rem;
+    
+    .hero-title {
+        font-size: 2.2rem;
     }
-
-    /* Tag pills */
-    .tag {
-        display: inline-block;
-        background: #1f2d3d;
-        color: #58a6ff;
-        border: 1px solid #2d4a6b;
-        border-radius: 20px;
-        padding: 2px 10px;
-        font-size: 0.75rem;
-        margin: 2px 3px;
+    
+    .metrics-grid {
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     }
-
-    /* Buttons */
-    .stButton > button {
-        background: #238636 !important;
-        color: #fff !important;
-        border: none !important;
-        border-radius: 6px !important;
-        font-weight: 600 !important;
-        transition: background .2s;
+    
+    .section-title {
+        font-size: 1.2rem;
     }
-    .stButton > button:hover { background: #2ea043 !important; }
+}
 
-    /* Input fields */
-    .stTextInput > div > div > input,
-    .stTextArea > div > div > textarea,
-    .stSelectbox > div > div {
-        background: #0d1117 !important;
-        border: 1px solid #30363d !important;
-        color: #e6edf3 !important;
-        border-radius: 6px !important;
-    }
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
 
-    /* Iframe (graph) border */
-    iframe { border-radius: 10px; border: 1px solid #30363d; }
+::-webkit-scrollbar-track {
+    background: rgba(30, 41, 59, 0.5);
+}
 
-    h1 { color: #e6edf3 !important; font-weight: 700; }
-    h2, h3 { color: #c9d1d9 !important; }
-    .stMarkdown p { color: #8b949e; }
+::-webkit-scrollbar-thumb {
+    background: rgba(59, 130, 246, 0.4);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(59, 130, 246, 0.6);
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Seed data ──────────────────────────────────────────────────────────────────
-DEFAULT_DATA = {
-    "nodes": [
-        # Domains
-        {"id": "AI",             "type": "domain",   "label": "Artificial Intelligence", "year": 1956, "citations": 45200},
-        {"id": "ML",             "type": "domain",   "label": "Machine Learning",        "year": 1959, "citations": 38700},
-        {"id": "NLP",            "type": "domain",   "label": "Natural Language Processing","year": 1950,"citations": 27100},
-        {"id": "CV",             "type": "domain",   "label": "Computer Vision",         "year": 1966, "citations": 31400},
-        {"id": "RL",             "type": "domain",   "label": "Reinforcement Learning",  "year": 1980, "citations": 18900},
+# ──────────────────────────────────────────────────────────────────────────────
+# HELPER FUNCTIONS
+# ──────────────────────────────────────────────────────────────────────────────
 
-        # Papers
-        {"id": "attention",      "type": "paper",    "label": "Attention Is All You Need","year": 2017,"citations": 72000},
-        {"id": "bert",           "type": "paper",    "label": "BERT",                    "year": 2018, "citations": 58000},
-        {"id": "gpt3",           "type": "paper",    "label": "GPT-3",                   "year": 2020, "citations": 41000},
-        {"id": "resnet",         "type": "paper",    "label": "ResNet",                  "year": 2015, "citations": 95000},
-        {"id": "alphago",        "type": "paper",    "label": "AlphaGo",                 "year": 2016, "citations": 12000},
-        {"id": "gan",            "type": "paper",    "label": "Generative Adversarial Nets","year":2014,"citations": 53000},
-        {"id": "llama",          "type": "paper",    "label": "LLaMA",                   "year": 2023, "citations": 14000},
-        {"id": "stable_diff",    "type": "paper",    "label": "Stable Diffusion",        "year": 2022, "citations": 9000},
+def extract_pdf_text(file) -> str:
+    """Extract text from PDF file."""
+    text = ""
+    try:
+        with pdfplumber.open(io.BytesIO(file.read())) as pdf:
+            for page in pdf.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    text += extracted + "\n"
+        return text.strip()
+    except Exception as e:
+        st.error(f"❌ Error extracting PDF: {str(e)}")
+        return ""
 
-        # Researchers
-        {"id": "hinton",         "type": "researcher","label": "Geoffrey Hinton",         "year": 1947,"citations": 310000},
-        {"id": "lecun",          "type": "researcher","label": "Yann LeCun",              "year": 1960, "citations": 218000},
-        {"id": "bengio",         "type": "researcher","label": "Yoshua Bengio",           "year": 1964, "citations": 247000},
-        {"id": "vaswani",        "type": "researcher","label": "Ashish Vaswani",          "year": 1985, "citations": 76000},
-        {"id": "lecun2",         "type": "researcher","label": "Tomas Mikolov",           "year": 1981, "citations": 64000},
+def call_groq_agent(client: Groq, system_prompt: str, user_prompt: str) -> str:
+    """Call Groq API."""
+    try:
+        response = client.messages.create(
+            model="mixtral-8x7b-32768",
+            max_tokens=1500,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}]
+        )
+        return response.content[0].text.strip()
+    except Exception as e:
+        st.error(f"❌ Groq API Error: {str(e)}")
+        return ""
 
-        # Institutions
-        {"id": "google",         "type": "institution","label": "Google DeepMind",       "year": 2010, "citations": 0},
-        {"id": "openai",         "type": "institution","label": "OpenAI",                "year": 2015, "citations": 0},
-        {"id": "meta_ai",        "type": "institution","label": "Meta AI (FAIR)",        "year": 2013, "citations": 0},
-        {"id": "mila",           "type": "institution","label": "Mila – Quebec AI",      "year": 1993, "citations": 0},
-
-        # Techniques
-        {"id": "transformer",    "type": "technique","label": "Transformer",             "year": 2017, "citations": 0},
-        {"id": "cnn",            "type": "technique","label": "CNN",                     "year": 1989, "citations": 0},
-        {"id": "llm",            "type": "technique","label": "Large Language Models",   "year": 2018, "citations": 0},
-        {"id": "diffusion",      "type": "technique","label": "Diffusion Models",        "year": 2020, "citations": 0},
-    ],
-    "edges": [
-        # domain → domain
-        ("AI","ML","contains"), ("AI","NLP","contains"), ("AI","CV","contains"), ("AI","RL","contains"),
-        ("ML","NLP","enables"), ("ML","CV","enables"), ("ML","RL","enables"),
-        # papers → domains
-        ("attention","NLP","advances"), ("bert","NLP","advances"), ("gpt3","NLP","advances"),
-        ("resnet","CV","advances"), ("alphago","RL","advances"), ("gan","CV","advances"),
-        ("llama","NLP","advances"), ("stable_diff","CV","advances"),
-        # techniques
-        ("attention","transformer","introduces"), ("transformer","llm","enables"),
-        ("resnet","cnn","extends"), ("stable_diff","diffusion","uses"),
-        # researchers → papers
-        ("vaswani","attention","authored"), ("hinton","gan","inspired"),
-        ("lecun","resnet","inspired"), ("bengio","bert","inspired"),
-        # researchers → institutions
-        ("hinton","google","affiliated"), ("lecun","meta_ai","affiliated"),
-        ("bengio","mila","affiliated"), ("vaswani","google","affiliated"),
-        # institutions → papers
-        ("google","alphago","produced"), ("openai","gpt3","produced"),
-        ("meta_ai","llama","produced"), ("google","attention","produced"),
-        ("openai","stable_diff","produced"),
-        # cross links
-        ("bert","transformer","built_on"), ("gpt3","transformer","built_on"),
-        ("llama","transformer","built_on"),
+def run_agent_pipeline(paper_text: str, api_key: str):
+    """Run 7-step analysis pipeline."""
+    
+    client = Groq(api_key=api_key)
+    truncated = paper_text[:12000]
+    
+    results = {}
+    steps = [
+        ("metadata",      "📋 Extracting metadata"),
+        ("summary",       "📝 Summarizing contribution"),
+        ("methodology",   "🔬 Analyzing methodology"),
+        ("findings",      "💡 Extracting key findings"),
+        ("limitations",   "⚠️ Identifying limitations"),
+        ("future_work",   "🚀 Extracting future work"),
+        ("critical",      "🧠 Generating critical review"),
     ]
-}
+    
+    progress_bar = st.progress(0)
+    status_container = st.container()
+    
+    for i, (key, label) in enumerate(steps):
+        with status_container:
+            st.markdown(f"""
+            <div class='step-indicator'>
+                <div class='step-number'>{i+1}</div>
+                <div class='step-text'>
+                    <strong>Step {i+1}/7</strong> — {label}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        if key == "metadata":
+            result = call_groq_agent(
+                client,
+                "You are a research paper analyst. Extract metadata and return ONLY valid JSON with keys: title, authors (list), year, domain, keywords (list of 5). No extra text.",
+                f"Extract from this paper:\n\n{truncated[:3000]}"
+            )
+            try:
+                clean = result.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                results[key] = json.loads(clean)
+            except:
+                results[key] = {"title": "Unknown", "authors": [], "year": "—", "domain": "—", "keywords": []}
+        
+        elif key == "summary":
+            result = call_groq_agent(
+                client,
+                "You are a research paper analyst. Write a clear 3-4 sentence summary of the paper's core contribution and problem it solves. Be concise and precise.",
+                f"Paper text:\n\n{truncated[:6000]}"
+            )
+            results[key] = result
+        
+        elif key == "methodology":
+            result = call_groq_agent(
+                client,
+                "You are a research paper analyst. Extract the methodology used. List the main steps, techniques, datasets, and models used. Use bullet points. Be specific.",
+                f"Paper text:\n\n{truncated}"
+            )
+            results[key] = result
+        
+        elif key == "findings":
+            result = call_groq_agent(
+                client,
+                "You are a research paper analyst. List the key findings and results of this paper. Include numbers/metrics if mentioned. Use bullet points. Be specific and factual.",
+                f"Paper text:\n\n{truncated}"
+            )
+            results[key] = result
+        
+        elif key == "limitations":
+            result = call_groq_agent(
+                client,
+                "You are a research paper analyst. Identify and explain the main limitations of this paper. What are the weaknesses, gaps, or constraints? Use bullet points.",
+                f"Paper text:\n\n{truncated}"
+            )
+            results[key] = result
+        
+        elif key == "future_work":
+            result = call_groq_agent(
+                client,
+                "You are a research paper analyst. Extract future research directions mentioned or implied by this paper. What should be built or studied next? Use bullet points.",
+                f"Paper text:\n\n{truncated}"
+            )
+            results[key] = result
+        
+        elif key == "critical":
+            result = call_groq_agent(
+                client,
+                "You are a senior academic reviewer. Write a brief critical review of this paper (3-5 sentences). Comment on novelty, rigor, clarity, and impact. Be balanced and honest.",
+                f"Paper text:\n\n{truncated[:6000]}"
+            )
+            results[key] = result
+        
+        progress_bar.progress((i + 1) / len(steps))
+        time.sleep(0.3)
+    
+    progress_bar.empty()
+    return results
 
-# Node type visual config
-TYPE_CONFIG = {
-    "domain":      {"color": "#1f6feb", "shape": "dot",     "size": 30, "emoji": "🌐"},
-    "paper":       {"color": "#388bfd", "shape": "square",  "size": 18, "emoji": "📄"},
-    "researcher":  {"color": "#3fb950", "shape": "triangle","size": 20, "emoji": "👤"},
-    "institution": {"color": "#d29922", "shape": "diamond", "size": 22, "emoji": "🏛️"},
-    "technique":   {"color": "#bc8cff", "shape": "ellipse", "size": 16, "emoji": "⚙️"},
-}
+# ──────────────────────────────────────────────────────────────────────────────
+# SESSION STATE
+# ──────────────────────────────────────────────────────────────────────────────
 
-EDGE_COLORS = {
-    "contains":   "#1f6feb", "enables":    "#388bfd", "advances":   "#3fb950",
-    "introduces": "#bc8cff", "extends":    "#bc8cff", "uses":       "#bc8cff",
-    "authored":   "#3fb950", "inspired":   "#3fb950", "affiliated": "#d29922",
-    "produced":   "#d29922", "built_on":   "#e3b341",
-}
+if "results" not in st.session_state:
+    st.session_state.results = None
+if "paper_text" not in st.session_state:
+    st.session_state.paper_text = ""
+if "filename" not in st.session_state:
+    st.session_state.filename = ""
 
-# ── Session state ──────────────────────────────────────────────────────────────
-if "graph_data" not in st.session_state:
-    st.session_state.graph_data = DEFAULT_DATA.copy()
-if "selected_node" not in st.session_state:
-    st.session_state.selected_node = None
+# ──────────────────────────────────────────────────────────────────────────────
+# NAVBAR
+# ──────────────────────────────────────────────────────────────────────────────
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-def build_nx(data):
-    G = nx.DiGraph()
-    for n in data["nodes"]:
-        G.add_node(n["id"], **n)
-    for e in data["edges"]:
-        G.add_edge(e[0], e[1], relation=e[2])
-    return G
+st.markdown("""
+<div class='navbar'>
+    <div class='logo'>
+        <div class='logo-icon'>🔬</div>
+        <div>Research Paper Analyzer</div>
+    </div>
+    <div class='nav-badge'>Powered by Groq</div>
+</div>
+""", unsafe_allow_html=True)
 
-def render_pyvis(data, filter_types=None, highlight_id=None, physics=True):
-    net = Network(height="580px", width="100%", bgcolor="#0d1117",
-                  font_color="#e6edf3", directed=True)
-    net.set_options(json.dumps({
-        "physics": {"enabled": physics, "barnesHut": {"gravitationalConstant": -12000, "springLength": 150}},
-        "edges": {"arrows": {"to": {"enabled": True, "scaleFactor": 0.6}},
-                  "smooth": {"type": "curvedCW", "roundness": 0.2}},
-        "interaction": {"hover": True, "tooltipDelay": 100},
-    }))
-    for n in data["nodes"]:
-        if filter_types and n["type"] not in filter_types:
-            continue
-        cfg   = TYPE_CONFIG.get(n["type"], {"color":"#58a6ff","shape":"dot","size":15})
-        border= "#ffffff" if n["id"] == highlight_id else cfg["color"]
-        bw    = 3 if n["id"] == highlight_id else 1
-        tip   = f"<b>{n['label']}</b><br>Type: {n['type']}<br>Year: {n.get('year','–')}"
-        if n.get("citations"):
-            tip += f"<br>Citations: {n['citations']:,}"
-        net.add_node(n["id"], label=n["label"], color={"background": cfg["color"],
-                     "border": border, "highlight": {"background": "#f0883e", "border": "#ffffff"}},
-                     shape=cfg["shape"], size=cfg["size"],
-                     borderWidth=bw, title=tip, font={"size": 11, "color": "#e6edf3"})
-    visible_ids = {n["id"] for n in data["nodes"] if not filter_types or n["type"] in filter_types}
-    for e in data["edges"]:
-        if e[0] in visible_ids and e[1] in visible_ids:
-            col = EDGE_COLORS.get(e[2], "#484f58")
-            net.add_edge(e[0], e[1], label=e[2], color=col,
-                         font={"size": 8, "color": "#8b949e", "align": "middle"}, width=1.4)
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
-    net.save_graph(tmp.name)
-    return open(tmp.name, "r", encoding="utf-8").read()
+# ──────────────────────────────────────────────────────────────────────────────
+# HERO SECTION
+# ──────────────────────────────────────────────────────────────────────────────
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## 🔬 KG Agent")
-    st.markdown("<div class='section-header'>Filter by Node Type</div>", unsafe_allow_html=True)
+st.markdown("""
+<div class='hero-section'>
+    <div class='hero-title'>
+        Intelligent Research Paper Analysis
+    </div>
+    <div class='hero-subtitle'>
+        ⚡ Powered by Groq's Ultra-Fast AI
+    </div>
+    <div class='hero-description'>
+        Upload any research paper and get comprehensive insights in seconds. 
+        7 intelligent steps extract metadata, methodology, findings, and more.
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
-    all_types = list(TYPE_CONFIG.keys())
-    selected_types = []
-    for t in all_types:
-        cfg = TYPE_CONFIG[t]
-        if st.checkbox(f"{cfg['emoji']} {t.capitalize()}", value=True, key=f"chk_{t}"):
-            selected_types.append(t)
+# ──────────────────────────────────────────────────────────────────────────────
+# INPUT SECTION
+# ──────────────────────────────────────────────────────────────────────────────
 
-    st.markdown("<div class='section-header'>Physics Simulation</div>", unsafe_allow_html=True)
-    physics_on = st.toggle("Enable Physics", value=True)
+st.markdown("""
+<div style='margin-bottom: 2rem;'>
+    <h3 style='color: #ffffff; font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem;'>
+        📥 Upload & Configure
+    </h3>
+</div>
+""", unsafe_allow_html=True)
 
-    st.markdown("<div class='section-header'>Search Node</div>", unsafe_allow_html=True)
-    search_q = st.text_input("Node name / keyword", placeholder="e.g. BERT, Hinton…")
+col_upload, col_key = st.columns([2, 1])
 
-    st.markdown("---")
-    st.markdown("<div class='section-header'>Add New Node</div>", unsafe_allow_html=True)
-    with st.form("add_node_form"):
-        new_id    = st.text_input("Node ID (unique)",  placeholder="my_paper")
-        new_label = st.text_input("Display Label",     placeholder="My New Paper")
-        new_type  = st.selectbox("Type", all_types)
-        new_year  = st.number_input("Year", 1900, 2030, 2024)
-        new_cite  = st.number_input("Citations", 0, 10_000_000, 0, step=100)
-        submitted = st.form_submit_button("➕ Add Node")
-        if submitted and new_id and new_label:
-            ids = {n["id"] for n in st.session_state.graph_data["nodes"]}
-            if new_id in ids:
-                st.error("ID already exists.")
-            else:
-                st.session_state.graph_data["nodes"].append({
-                    "id": new_id, "type": new_type, "label": new_label,
-                    "year": int(new_year), "citations": int(new_cite)
-                })
-                st.success(f"Added '{new_label}'")
-                st.rerun()
+with col_upload:
+    st.markdown("""
+    <div class='input-card'>
+        <div class='input-label'>
+            <span class='input-label-icon'>📄</span>
+            <span>Research Paper (PDF)</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    uploaded_file = st.file_uploader(
+        "Upload PDF",
+        type=["pdf"],
+        label_visibility="collapsed",
+        help="Drag & drop or click to upload"
+    )
+    if uploaded_file:
+        st.session_state.filename = uploaded_file.name
+        st.markdown(f"<p style='color: #60a5fa; font-size: 0.85rem; margin-top: 0.5rem;'>✓ {uploaded_file.name}</p>", unsafe_allow_html=True)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("<div class='section-header'>Add Relationship</div>", unsafe_allow_html=True)
-    with st.form("add_edge_form"):
-        all_ids = [n["id"] for n in st.session_state.graph_data["nodes"]]
-        src = st.selectbox("Source", all_ids, key="src")
-        tgt = st.selectbox("Target", all_ids, key="tgt")
-        rel = st.text_input("Relation", placeholder="cites, uses, …")
-        e_sub = st.form_submit_button("🔗 Add Edge")
-        if e_sub and rel:
-            st.session_state.graph_data["edges"].append((src, tgt, rel))
-            st.success(f"Edge added: {src} → {tgt}")
-            st.rerun()
-
-    st.markdown("---")
-    if st.button("🔄 Reset to Default"):
-        st.session_state.graph_data = DEFAULT_DATA.copy()
-        st.rerun()
-
-# ── Main area ──────────────────────────────────────────────────────────────────
-st.markdown("# 🔬 Knowledge Graph Agent")
-st.markdown("<p style='color:#8b949e;margin-top:-0.5rem'>Research Ecosystem Visualization · Internship Project</p>", unsafe_allow_html=True)
-
-# Tabs
-tab_graph, tab_explore, tab_data = st.tabs(["🕸️ Graph View", "🔎 Explore Nodes", "📊 Analytics"])
-
-# ── TAB 1: Graph ───────────────────────────────────────────────────────────────
-with tab_graph:
-    data  = st.session_state.graph_data
-    G     = build_nx(data)
-
-    # Search highlight
-    highlight = None
-    if search_q:
-        matches = [n["id"] for n in data["nodes"]
-                   if search_q.lower() in n["label"].lower() or search_q.lower() in n["id"].lower()]
-        if matches:
-            highlight = matches[0]
-            st.info(f"🔍 Highlighting: **{matches[0]}** ({len(matches)} match(es))")
-
-    # Metrics row
-    n_nodes = len([n for n in data["nodes"] if n["type"] in selected_types])
-    n_edges = len(data["edges"])
-    density = nx.density(G)
-    components = nx.number_weakly_connected_components(G)
-
-    st.markdown(f"""
-    <div class="metric-row">
-      <div class="metric-tile"><div class="val">{n_nodes}</div><div class="lbl">Nodes Visible</div></div>
-      <div class="metric-tile"><div class="val">{n_edges}</div><div class="lbl">Relationships</div></div>
-      <div class="metric-tile"><div class="val">{density:.3f}</div><div class="lbl">Graph Density</div></div>
-      <div class="metric-tile"><div class="val">{components}</div><div class="lbl">Components</div></div>
-      <div class="metric-tile"><div class="val">{len(data['nodes'])}</div><div class="lbl">Total Nodes</div></div>
+with col_key:
+    st.markdown("""
+    <div class='input-card'>
+        <div class='input-label'>
+            <span class='input-label-icon'>🔑</span>
+            <span>API Key</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    api_key = st.text_input(
+        "API Key",
+        type="password",
+        placeholder="gsk_...",
+        label_visibility="collapsed",
+        help="From console.groq.com"
+    )
+    
+    st.markdown("""
+    <p style='color: #64748b; font-size: 0.75rem; margin-top: 0.5rem;'>
+        🔒 Never stored. Session only.
+    </p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Legend
-    legend_html = "<div style='display:flex;gap:14px;flex-wrap:wrap;margin-bottom:0.75rem;'>"
-    for t, cfg in TYPE_CONFIG.items():
-        legend_html += f"<span style='font-size:0.78rem;color:{cfg['color']}'>{cfg['emoji']} {t.capitalize()}</span>"
-    legend_html += "</div>"
-    st.markdown(legend_html, unsafe_allow_html=True)
+# Analyze button
+st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+analyze_btn = st.button("🚀 Analyze Paper", use_container_width=True)
 
-    # Graph render
-    html = render_pyvis(data, filter_types=selected_types if selected_types else None,
-                        highlight_id=highlight, physics=physics_on)
-    st.components.v1.html(html, height=600, scrolling=False)
+# ──────────────────────────────────────────────────────────────────────────────
+# RUN ANALYSIS
+# ──────────────────────────────────────────────────────────────────────────────
 
-    st.markdown("<p style='text-align:center;color:#484f58;font-size:0.75rem;margin-top:0.5rem'>Drag nodes · Scroll to zoom · Hover for details</p>", unsafe_allow_html=True)
+if analyze_btn:
+    if not uploaded_file:
+        st.warning("📄 Please upload a research paper PDF first.")
+    elif not api_key:
+        st.warning("🔑 Please enter your Groq API key.")
+    elif not api_key.startswith("gsk_"):
+        st.warning("⚠️ API key should start with 'gsk_'. Get one from console.groq.com")
+    else:
+        with st.spinner("Processing your paper..."):
+            try:
+                uploaded_file.seek(0)
+                paper_text = extract_pdf_text(uploaded_file)
+                
+                if len(paper_text) < 200:
+                    st.error("❌ Could not extract enough text. Try another PDF.")
+                else:
+                    st.session_state.paper_text = paper_text
+                    
+                    st.markdown("""
+                    <h2 class='section-title'>
+                        <span class='section-icon'>⚙️</span>
+                        Analyzing Your Paper
+                    </h2>
+                    """, unsafe_allow_html=True)
+                    
+                    results = run_agent_pipeline(paper_text, api_key)
+                    st.session_state.results = results
+                    st.rerun()
+            
+            except Exception as e:
+                if "401" in str(e) or "Unauthorized" in str(e) or "invalid" in str(e).lower():
+                    st.error("❌ Invalid Groq API key. Check console.groq.com")
+                elif "rate" in str(e).lower():
+                    st.error("⏳ Rate limit reached. Try again in a moment.")
+                else:
+                    st.error(f"❌ Error: {str(e)}")
 
-# ── TAB 2: Explore ─────────────────────────────────────────────────────────────
-with tab_explore:
-    data = st.session_state.graph_data
-    G    = build_nx(data)
+# ──────────────────────────────────────────────────────────────────────────────
+# RESULTS DISPLAY
+# ──────────────────────────────────────────────────────────────────────────────
 
-    col_left, col_right = st.columns([1, 2])
-
-    with col_left:
-        st.markdown("### Select a Node")
-        node_options = {f"{TYPE_CONFIG[n['type']]['emoji']} {n['label']} ({n['id']})": n["id"]
-                        for n in data["nodes"]}
-        chosen_label = st.selectbox("Node", list(node_options.keys()), label_visibility="collapsed")
-        chosen_id    = node_options[chosen_label]
-        node_info    = next(n for n in data["nodes"] if n["id"] == chosen_id)
-        cfg          = TYPE_CONFIG[node_info["type"]]
-
+if st.session_state.results:
+    r = st.session_state.results
+    meta = r.get("metadata", {})
+    
+    # PAPER INFO
+    st.markdown("""
+    <h2 class='section-title'>
+        <span class='section-icon'>📑</span>
+        Paper Information
+    </h2>
+    """, unsafe_allow_html=True)
+    
+    st.markdown(f"""
+    <div class='paper-card'>
+        <div class='paper-title'>{meta.get('title', st.session_state.filename)}</div>
+        <div class='paper-meta'>
+            <div class='meta-item'>
+                <span class='meta-icon'>👥</span>
+                <span>{", ".join(meta.get("authors", [])) or "Authors not detected"}</span>
+            </div>
+            <div class='meta-item'>
+                <span class='meta-icon'>📅</span>
+                <span>{meta.get("year", "—")}</span>
+            </div>
+            <div class='meta-item'>
+                <span class='meta-icon'>🏷️</span>
+                <span>{meta.get("domain", "—")}</span>
+            </div>
+        </div>
+        <div class='keywords-container'>
+            {"".join(f"<span class='keyword-tag'>{k}</span>" for k in meta.get("keywords", []))}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # METRICS
+    st.markdown("""
+    <h2 class='section-title'>
+        <span class='section-icon'>📊</span>
+        Analysis Metrics
+    </h2>
+    """, unsafe_allow_html=True)
+    
+    words = len(st.session_state.paper_text.split())
+    pages_est = max(1, words // 300)
+    findings = r.get("findings", "").count("•") + r.get("findings", "").count("-") + 1
+    lims = r.get("limitations", "").count("•") + r.get("limitations", "").count("-") + 1
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
         st.markdown(f"""
-        <div class="kg-card">
-          <h4>{cfg['emoji']} {node_info['label']}</h4>
-          <p>Type: <b style='color:{cfg['color']}'>{node_info['type'].capitalize()}</b></p>
-          <p>Year: {node_info.get('year','–')}</p>
-          {"<p>Citations: <b style='color:#58a6ff'>" + f"{node_info['citations']:,}" + "</b></p>" if node_info.get('citations') else ""}
+        <div class='metric-card'>
+            <div class='metric-value'>{words:,}</div>
+            <div class='metric-label'>Words</div>
         </div>
         """, unsafe_allow_html=True)
-
-        # PageRank
-        try:
-            pr = nx.pagerank(G, alpha=0.85)
-            rank_val = pr.get(chosen_id, 0)
-            st.markdown(f"<div class='kg-card'><h4>📈 PageRank Score</h4><p style='font-size:1.3rem;color:#58a6ff;font-weight:700'>{rank_val:.5f}</p></div>", unsafe_allow_html=True)
-        except Exception:
-            pass
-
-    with col_right:
-        st.markdown("### Connections")
-        out_edges = [(e[1], e[2]) for e in data["edges"] if e[0] == chosen_id]
-        in_edges  = [(e[0], e[2]) for e in data["edges"] if e[1] == chosen_id]
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(f"**⬆️ Outgoing ({len(out_edges)})**")
-            for nid, rel in out_edges:
-                lbl = next((n["label"] for n in data["nodes"] if n["id"] == nid), nid)
-                col = EDGE_COLORS.get(rel, "#484f58")
-                st.markdown(f"<div class='kg-card'><h4>→ {lbl}</h4><p><span style='color:{col}'>{rel}</span></p></div>", unsafe_allow_html=True)
-        with c2:
-            st.markdown(f"**⬇️ Incoming ({len(in_edges)})**")
-            for nid, rel in in_edges:
-                lbl = next((n["label"] for n in data["nodes"] if n["id"] == nid), nid)
-                col = EDGE_COLORS.get(rel, "#484f58")
-                st.markdown(f"<div class='kg-card'><h4>← {lbl}</h4><p><span style='color:{col}'>{rel}</span></p></div>", unsafe_allow_html=True)
-
-        # Mini subgraph
-        st.markdown("### Local Subgraph")
-        neighbors = set([chosen_id] + [e[1] for e in out_edges] + [e[0] for e in in_edges])
-        sub_data  = {
-            "nodes": [n for n in data["nodes"] if n["id"] in neighbors],
-            "edges": [e for e in data["edges"] if e[0] in neighbors and e[1] in neighbors],
-        }
-        sub_html = render_pyvis(sub_data, highlight_id=chosen_id, physics=True)
-        st.components.v1.html(sub_html, height=340)
-
-# ── TAB 3: Analytics ───────────────────────────────────────────────────────────
-with tab_data:
-    data = st.session_state.graph_data
-    G    = build_nx(data)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### Node Distribution")
-        type_counts = {}
-        for n in data["nodes"]:
-            type_counts[n["type"]] = type_counts.get(n["type"], 0) + 1
-        df_types = pd.DataFrame(list(type_counts.items()), columns=["Type","Count"])
-        st.bar_chart(df_types.set_index("Type"), color="#388bfd")
-
+    
     with col2:
-        st.markdown("### Top Nodes by In-Degree")
-        in_deg  = dict(G.in_degree())
-        top10   = sorted(in_deg.items(), key=lambda x: x[1], reverse=True)[:10]
-        labels  = [next((n["label"] for n in data["nodes"] if n["id"] == nid), nid) for nid, _ in top10]
-        df_deg  = pd.DataFrame({"Node": labels, "In-Degree": [d for _, d in top10]})
-        st.bar_chart(df_deg.set_index("Node"), color="#3fb950")
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-value'>~{pages_est}</div>
+            <div class='metric-label'>Pages</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-value'>{min(findings, 9)}</div>
+            <div class='metric-label'>Findings</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-value'>{min(lims, 7)}</div>
+            <div class='metric-label'>Limitations</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col5:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-value'>7</div>
+            <div class='metric-label'>Steps</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # SUMMARY
+    st.markdown("""
+    <h2 class='section-title'>
+        <span class='section-icon'>💡</span>
+        Core Contribution
+    </h2>
+    """, unsafe_allow_html=True)
+    
+    st.markdown(f"""
+    <div class='insight-card'>
+        <div class='insight-header'>
+            <span class='insight-icon'>📝</span>
+            <span class='insight-title'>Summary</span>
+        </div>
+        <div class='insight-content'>{r.get("summary", "—")}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # CRITICAL REVIEW
+    st.markdown(f"""
+    <div class='insight-card' style='border-color: rgba(168, 85, 247, 0.3); background: rgba(168, 85, 247, 0.05);'>
+        <div class='insight-header'>
+            <span class='insight-icon'>🧠</span>
+            <span class='insight-title' style='color: #d8b4fe;'>Critical Review</span>
+        </div>
+        <div class='insight-content'>{r.get("critical", "—")}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # DETAILED INSIGHTS
+    st.markdown("""
+    <h2 class='section-title'>
+        <span class='section-icon'>🔍</span>
+        Detailed Insights
+    </h2>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown(f"""
+        <div class='insight-card'>
+            <div class='insight-header'>
+                <span class='insight-icon'>🔬</span>
+                <span class='insight-title' style='color: #86efac;'>Methodology</span>
+            </div>
+            <div class='insight-content' style='white-space: pre-wrap;'>{r.get("methodology", "—")}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class='insight-card'>
+            <div class='insight-header'>
+                <span class='insight-icon'>📈</span>
+                <span class='insight-title' style='color: #fbbf24;'>Key Findings</span>
+            </div>
+            <div class='insight-content' style='white-space: pre-wrap;'>{r.get("findings", "—")}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(f"""
+        <div class='insight-card'>
+            <div class='insight-header'>
+                <span class='insight-icon'>⚠️</span>
+                <span class='insight-title' style='color: #f87171;'>Limitations</span>
+            </div>
+            <div class='insight-content' style='white-space: pre-wrap;'>{r.get("limitations", "—")}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # FUTURE WORK
+    st.markdown("""
+    <h2 class='section-title'>
+        <span class='section-icon'>🚀</span>
+        Future Directions
+    </h2>
+    """, unsafe_allow_html=True)
+    
+    st.markdown(f"""
+    <div class='insight-card' style='border-color: rgba(34, 197, 94, 0.3); background: rgba(34, 197, 94, 0.05);'>
+        <div class='insight-header'>
+            <span class='insight-icon'>🎯</span>
+            <span class='insight-title' style='color: #86efac;'>Future Work</span>
+        </div>
+        <div class='insight-content' style='white-space: pre-wrap;'>{r.get("future_work", "—")}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # EXPORT
+    st.markdown("""
+    <h2 class='section-title'>
+        <span class='section-icon'>⬇️</span>
+        Export Results
+    </h2>
+    """, unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    
+    report = f"""RESEARCH INSIGHT REPORT
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Tool: Research Paper Analyzer (Powered by Groq)
+{'='*70}
 
-    st.markdown("### Citation Leaders")
-    df_cite = pd.DataFrame([
-        {"Label": n["label"], "Type": n["type"], "Year": n.get("year",""), "Citations": n.get("citations",0)}
-        for n in data["nodes"] if n.get("citations",0) > 0
-    ]).sort_values("Citations", ascending=False)
-    st.dataframe(df_cite, use_container_width=True, hide_index=True)
+PAPER INFORMATION
+{'='*70}
+Title: {meta.get('title', '—')}
+Authors: {", ".join(meta.get('authors', [])) or '—'}
+Year: {meta.get('year', '—')}
+Domain: {meta.get('domain', '—')}
+Keywords: {", ".join(meta.get('keywords', [])) or '—'}
 
-    st.markdown("### Relationship Types")
-    rel_counts = {}
-    for e in data["edges"]:
-        rel_counts[e[2]] = rel_counts.get(e[2], 0) + 1
-    df_rel = pd.DataFrame(list(rel_counts.items()), columns=["Relation","Count"]).sort_values("Count", ascending=False)
-    st.dataframe(df_rel, use_container_width=True, hide_index=True)
+{'='*70}
+SUMMARY
+{'='*70}
+{r.get('summary', '—')}
 
-    st.markdown("### Graph Properties")
-    pr = nx.pagerank(G, alpha=0.85)
-    top_pr = sorted(pr.items(), key=lambda x: x[1], reverse=True)[:5]
-    st.markdown("**Top 5 by PageRank:**")
-    for nid, score in top_pr:
-        lbl = next((n["label"] for n in data["nodes"] if n["id"] == nid), nid)
-        st.markdown(f"- **{lbl}** — `{score:.5f}`")
+{'='*70}
+METHODOLOGY
+{'='*70}
+{r.get('methodology', '—')}
+
+{'='*70}
+KEY FINDINGS
+{'='*70}
+{r.get('findings', '—')}
+
+{'='*70}
+LIMITATIONS
+{'='*70}
+{r.get('limitations', '—')}
+
+{'='*70}
+FUTURE WORK
+{'='*70}
+{r.get('future_work', '—')}
+
+{'='*70}
+CRITICAL REVIEW
+{'='*70}
+{r.get('critical', '—')}
+
+{'='*70}
+END OF REPORT
+{'='*70}
+"""
+    
+    with col1:
+        st.download_button(
+            "📄 Download Report (TXT)",
+            data=report,
+            file_name=f"report_{meta.get('title', 'paper')[:25].replace(' ', '_')}.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+    
+    with col2:
+        st.download_button(
+            "📊 Download Data (JSON)",
+            data=json.dumps(r, indent=2),
+            file_name=f"data_{meta.get('title', 'paper')[:25].replace(' ', '_')}.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+    
+    # RAW TEXT
+    with st.expander("📄 View Extracted PDF Text"):
+        st.text_area(
+            "Raw Text",
+            value=st.session_state.paper_text[:3000] + "\n\n[... truncated ...]",
+            height=250,
+            label_visibility="collapsed"
+        )
+    
+    # RESET
+    st.markdown("<div style='margin-top: 2rem;'></div>", unsafe_allow_html=True)
+    if st.button("🔄 Analyze Another Paper", use_container_width=True):
+        st.session_state.results = None
+        st.session_state.paper_text = ""
+        st.session_state.filename = ""
+        st.rerun()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# EMPTY STATE
+# ──────────────────────────────────────────────────────────────────────────────
+
+if not st.session_state.results and not analyze_btn:
+    st.markdown("""
+    <div class='empty-state'>
+        <div class='empty-icon'>📚</div>
+        <div class='empty-title'>Ready to Analyze</div>
+        <div class='empty-text'>
+            Upload a research paper and enter your Groq API key to begin intelligent analysis
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <h3 style='color: #cbd5e1; margin-top: 3rem; margin-bottom: 1.5rem; font-size: 1.1rem;'>
+        ✨ What You Get
+    </h3>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        <div class='feature-card'>
+            <div class='feature-icon'>📋</div>
+            <div class='feature-name'>Smart Metadata</div>
+            <div class='feature-desc'>Title, authors, year, domain, keywords</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class='feature-card'>
+            <div class='feature-icon'>⚙️</div>
+            <div class='feature-name'>7-Step Analysis</div>
+            <div class='feature-desc'>Summary, methodology, findings, limits</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class='feature-card'>
+            <div class='feature-icon'>⚡</div>
+            <div class='feature-name'>Lightning Fast</div>
+            <div class='feature-desc'>Results in 4-6 seconds powered by Groq</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class='info-box'>
+        <strong>🔑 Need a Groq API Key?</strong><br>
+        Get a free key in 2 minutes at <strong><a href='https://console.groq.com' target='_blank'>console.groq.com</a></strong>
+    </div>
+    """, unsafe_allow_html=True)
