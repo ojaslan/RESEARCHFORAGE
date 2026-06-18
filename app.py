@@ -321,7 +321,7 @@ if "filename" not in st.session_state:
 st.markdown("""
 <div class='header'>
     <div style='font-size: 2rem; margin-bottom: 0.5rem;'>📊</div>
-    <div class='main-title'>Paper Intelligence</div>
+    <div class='main-title'>RESEARCHFORAGE</div>
     <div class='subtitle'>Professional Research Paper Analysis & Insights</div>
 </div>
 """, unsafe_allow_html=True)
